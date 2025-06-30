@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Message } from "discord.js";
+import { Client, GatewayIntentBits, GuildMember, Message } from "discord.js";
 import axios, { AxiosResponse } from "axios";
 import { config } from "./config/environment";
 import { MessageData } from "./types";
@@ -132,7 +132,7 @@ class DiscordBot {
 
   private async handleNewMember(member: GuildMember): Promise<void> {
     try {
-      const roleId = config.DEFAULT_ROLE_ID; // Mets l’ID du rôle dans ta config
+      const roleId = config.DEFAULT_ROLE_ID;
 
       await member.roles.add(roleId);
       console.log(`✅ Rôle ajouté à ${member.user.tag}`);
