@@ -41,4 +41,5 @@ export interface EnvironmentConfig {
   DISCORD_TOKEN: string;
   CHANNEL_ID: string;
   N8N_WEBHOOK_URL: string;
+  DEFAULT_ROLE_ID: string;
 }

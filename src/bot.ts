@@ -14,6 +14,7 @@ class DiscordBot {
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers,
       ],
     });
 
@@ -32,8 +33,10 @@ class DiscordBot {
 
     this.client.on("messageCreate", this.handleMessage.bind(this));
     this.client.on("error", this.handleError.bind(this));
+    this.client.on("guildMemberAdd", this.handleNewMember.bind(this));
   }
 
+  // Récupère le dernier message dans le salon de vérification
   private async handleMessage(message: Message): Promise<void> {
     try {
       // Ignorer les messages du bot
@@ -53,6 +56,7 @@ class DiscordBot {
     }
   }
 
+  // Formatage des données renvoyées
   private formatMessageData(message: Message): MessageData {
     if (!message.guild) {
       throw new Error("Message non envoyé dans un serveur");
@@ -97,6 +101,7 @@ class DiscordBot {
     };
   }
 
+  // Envoie des données
   private async sendToN8n(messageData: MessageData): Promise<void> {
     try {
       const response: AxiosResponse = await axios.post(
@@ -122,6 +127,20 @@ class DiscordBot {
         console.error("❌ Erreur inconnue:", error);
       }
       throw error;
+    }
+  }
+
+  private async handleNewMember(member: GuildMember): Promise<void> {
+    try {
+      const roleId = config.DEFAULT_ROLE_ID; // Mets l’ID du rôle dans ta config
+
+      await member.roles.add(roleId);
+      console.log(`✅ Rôle ajouté à ${member.user.tag}`);
+    } catch (error) {
+      console.error(
+        `❌ Impossible d’ajouter le rôle à ${member.user.tag}:`,
+        error
+      );
     }
   }
 
