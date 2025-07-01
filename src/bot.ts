@@ -7,6 +7,7 @@ class DiscordBot {
   private client: Client;
   private readonly channelId: string;
   private readonly webhookUrl: string;
+  private messageCooldowns: Map<string, number> = new Map();
 
   constructor() {
     this.client = new Client({
@@ -22,6 +23,7 @@ class DiscordBot {
     this.webhookUrl = config.N8N_WEBHOOK_URL;
 
     this.setupEventListeners();
+    this.setupCooldownCleanup();
   }
 
   private setupEventListeners(): void {
@@ -36,14 +38,24 @@ class DiscordBot {
     this.client.on("guildMemberAdd", this.handleNewMember.bind(this));
   }
 
-  // Récupère le dernier message dans le salon de vérification
   private async handleMessage(message: Message): Promise<void> {
     try {
-      // Ignorer les messages du bot
       if (message.author.bot) return;
-
-      // Vérifier si c'est le bon salon
       if (message.channel.id !== this.channelId) return;
+
+      const userId = message.author.id;
+      const now = Date.now();
+      const cooldownMs = 10 * 1000;
+
+      const lastMessageTime = this.messageCooldowns.get(userId);
+      if (lastMessageTime && now - lastMessageTime < cooldownMs) {
+        console.log(
+          `🚫 Message ignoré de ${message.author.username} (anti-spam cooldown)`
+        );
+        return;
+      }
+
+      this.messageCooldowns.set(userId, now);
 
       console.log(
         `📨 Nouveau message de ${message.author.username}: ${message.content}`
@@ -56,7 +68,6 @@ class DiscordBot {
     }
   }
 
-  // Formatage des données renvoyées
   private formatMessageData(message: Message): MessageData {
     if (!message.guild) {
       throw new Error("Message non envoyé dans un serveur");
@@ -95,13 +106,11 @@ class DiscordBot {
           username: user.username,
         })),
         everyone: message.mentions.everyone,
-        // Correction: on vérifie si le message contient @here manuellement
         here: message.content.includes("@here"),
       },
     };
   }
 
-  // Envoie des données
   private async sendToN8n(messageData: MessageData): Promise<void> {
     try {
       const response: AxiosResponse = await axios.post(
@@ -133,7 +142,6 @@ class DiscordBot {
   private async handleNewMember(member: GuildMember): Promise<void> {
     try {
       const roleId = config.DEFAULT_ROLE_ID;
-
       await member.roles.add(roleId);
       console.log(`✅ Rôle ajouté à ${member.user.tag}`);
     } catch (error) {
@@ -142,6 +150,18 @@ class DiscordBot {
         error
       );
     }
+  }
+
+  private setupCooldownCleanup(): void {
+    setInterval(() => {
+      const now = Date.now();
+      const timeout = 5 * 60 * 1000; // 5 minutes
+      for (const [userId, timestamp] of this.messageCooldowns.entries()) {
+        if (now - timestamp > timeout) {
+          this.messageCooldowns.delete(userId);
+        }
+      }
+    }, 60 * 1000); // nettoyage toutes les minutes
   }
 
   private handleError(error: Error): void {
@@ -167,7 +187,6 @@ class DiscordBot {
 // Initialisation et démarrage
 const bot = new DiscordBot();
 
-// Gestion des signaux d'arrêt
 const gracefulShutdown = async (signal: string): Promise<void> => {
   console.log(`\n📡 Signal reçu: ${signal}`);
   await bot.stop();
@@ -177,7 +196,6 @@ const gracefulShutdown = async (signal: string): Promise<void> => {
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
-// Gestion des erreurs non capturées
 process.on("unhandledRejection", (reason, promise) => {
   console.error("❌ Promesse rejetée non gérée:", reason);
   console.error("À:", promise);
@@ -188,7 +206,6 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-// Démarrage du bot
 bot.start().catch((error) => {
   console.error("❌ Impossible de démarrer le bot:", error);
   process.exit(1);
