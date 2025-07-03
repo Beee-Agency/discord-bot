@@ -1,212 +1,105 @@
-import { Client, GatewayIntentBits, GuildMember, Message } from "discord.js";
-import axios, { AxiosResponse } from "axios";
+import {
+  Client,
+  GatewayIntentBits,
+  Guild,
+  GuildMember,
+  Invite,
+} from "discord.js";
+import axios from "axios";
 import { config } from "./config/environment";
-import { MessageData } from "./types";
 
-class DiscordBot {
-  private client: Client;
-  private readonly channelId: string;
-  private readonly webhookUrl: string;
-  private messageCooldowns: Map<string, number> = new Map();
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+});
 
-  constructor() {
-    this.client = new Client({
-      intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers,
-      ],
-    });
+const invitesCache: Map<string, Map<string, number>> = new Map();
 
-    this.channelId = config.CHANNEL_ID;
-    this.webhookUrl = config.N8N_WEBHOOK_URL;
-
-    this.setupEventListeners();
-    this.setupCooldownCleanup();
-  }
-
-  private setupEventListeners(): void {
-    this.client.once("ready", () => {
-      console.log(`✅ Bot connecté en tant que ${this.client.user?.tag}`);
-      console.log(`📡 Surveillance du salon: ${this.channelId}`);
-      console.log(`🔗 Webhook n8n: ${this.webhookUrl}`);
-    });
-
-    this.client.on("messageCreate", this.handleMessage.bind(this));
-    this.client.on("error", this.handleError.bind(this));
-    this.client.on("guildMemberAdd", this.handleNewMember.bind(this));
-  }
-
-  private async handleMessage(message: Message): Promise<void> {
-    try {
-      if (message.author.bot) return;
-      if (message.channel.id !== this.channelId) return;
-
-      const userId = message.author.id;
-      const now = Date.now();
-      const cooldownMs = 10 * 1000;
-
-      const lastMessageTime = this.messageCooldowns.get(userId);
-      if (lastMessageTime && now - lastMessageTime < cooldownMs) {
-        console.log(
-          `🚫 Message ignoré de ${message.author.username} (anti-spam cooldown)`
-        );
-        return;
-      }
-
-      this.messageCooldowns.set(userId, now);
-
-      console.log(
-        `📨 Nouveau message de ${message.author.username}: ${message.content}`
-      );
-
-      const messageData = this.formatMessageData(message);
-      await this.sendToN8n(messageData);
-    } catch (error) {
-      console.error("❌ Erreur lors du traitement du message:", error);
-    }
-  }
-
-  private formatMessageData(message: Message): MessageData {
-    if (!message.guild) {
-      throw new Error("Message non envoyé dans un serveur");
-    }
-
-    return {
-      id: message.id,
-      content: message.content,
-      author: {
-        id: message.author.id,
-        username: message.author.username,
-        displayName: message.author.displayName || message.author.username,
-        avatar: message.author.displayAvatarURL(),
-      },
-      channel: {
-        id: message.channel.id,
-        name: message.channel.isDMBased()
-          ? "DM"
-          : (message.channel as any).name || "Unknown",
-      },
-      guild: {
-        id: message.guild.id,
-        name: message.guild.name,
-      },
-      timestamp: message.createdAt.toISOString(),
-      url: message.url,
-      attachments: message.attachments.map((attachment) => ({
-        id: attachment.id,
-        name: attachment.name,
-        url: attachment.url,
-        size: attachment.size,
-      })),
-      mentions: {
-        users: message.mentions.users.map((user) => ({
-          id: user.id,
-          username: user.username,
-        })),
-        everyone: message.mentions.everyone,
-        here: message.content.includes("@here"),
-      },
-    };
-  }
-
-  private async sendToN8n(messageData: MessageData): Promise<void> {
-    try {
-      const response: AxiosResponse = await axios.post(
-        this.webhookUrl,
-        messageData,
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
-          timeout: 10000,
-        }
-      );
-
-      console.log(`✅ Message envoyé vers n8n (Status: ${response.status})`);
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        console.error("❌ Erreur Axios:", error.message);
-        if (error.response) {
-          console.error("Response status:", error.response.status);
-          console.error("Response data:", error.response.data);
-        }
-      } else {
-        console.error("❌ Erreur inconnue:", error);
-      }
-      throw error;
-    }
-  }
-
-  private async handleNewMember(member: GuildMember): Promise<void> {
-    try {
-      const roleId = config.DEFAULT_ROLE_ID;
-      await member.roles.add(roleId);
-      console.log(`✅ Rôle ajouté à ${member.user.tag}`);
-    } catch (error) {
-      console.error(
-        `❌ Impossible d’ajouter le rôle à ${member.user.tag}:`,
-        error
-      );
-    }
-  }
-
-  private setupCooldownCleanup(): void {
-    setInterval(() => {
-      const now = Date.now();
-      const timeout = 5 * 60 * 1000; // 5 minutes
-      for (const [userId, timestamp] of this.messageCooldowns.entries()) {
-        if (now - timestamp > timeout) {
-          this.messageCooldowns.delete(userId);
-        }
-      }
-    }, 60 * 1000); // nettoyage toutes les minutes
-  }
-
-  private handleError(error: Error): void {
-    console.error("❌ Erreur Discord:", error);
-  }
-
-  public async start(): Promise<void> {
-    try {
-      console.log("🚀 Démarrage du bot...");
-      await this.client.login(config.DISCORD_TOKEN);
-    } catch (error) {
-      console.error("❌ Erreur de connexion:", error);
-      throw error;
-    }
-  }
-
-  public async stop(): Promise<void> {
-    console.log("\n👋 Arrêt du bot...");
-    this.client.destroy();
+// ⚙️ Met à jour le cache des invitations pour une guilde
+async function cacheGuildInvites(guild: Guild): Promise<void> {
+  try {
+    const invites = await guild.invites.fetch();
+    const codeUsesMap = new Map<string, number>();
+    invites.forEach((inv) => codeUsesMap.set(inv.code, inv.uses ?? 0));
+    invitesCache.set(guild.id, codeUsesMap);
+    console.log(`📥 Invites mises en cache pour ${guild.name}`);
+  } catch (err) {
+    console.warn(
+      `⚠️ Erreur lors du fetch des invites pour ${guild.name}:`,
+      err
+    );
   }
 }
 
-// Initialisation et démarrage
-const bot = new DiscordBot();
-
-const gracefulShutdown = async (signal: string): Promise<void> => {
-  console.log(`\n📡 Signal reçu: ${signal}`);
-  await bot.stop();
-  process.exit(0);
-};
-
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("❌ Promesse rejetée non gérée:", reason);
-  console.error("À:", promise);
+// 🔄 Au démarrage du bot
+client.once("ready", async () => {
+  console.log(`✅ Bot connecté en tant que ${client.user?.tag}`);
+  for (const [, guild] of client.guilds.cache) {
+    await cacheGuildInvites(guild);
+  }
 });
 
-process.on("uncaughtException", (error) => {
-  console.error("❌ Exception non capturée:", error);
-  process.exit(1);
+// 👤 Détection des nouveaux membres
+client.on("guildMemberAdd", async (member: GuildMember) => {
+  try {
+    const guild = member.guild;
+    const oldInvites = invitesCache.get(guild.id) || new Map();
+    const newInvites = await guild.invites.fetch();
+
+    let usedInvite: Invite | null = null;
+
+    for (const [code, invite] of newInvites) {
+      const oldUses = oldInvites.get(code) ?? 0;
+      const newUses = invite.uses ?? 0;
+      console.log(`🔍 Vérif invite ${code}: old=${oldUses} new=${newUses}`);
+
+      if (newUses > oldUses) {
+        usedInvite = invite;
+        break;
+      }
+    }
+
+    await cacheGuildInvites(guild); // met à jour le cache après comparaison
+
+    const payload = {
+      userId: member.user.id,
+      username: member.user.username,
+      discriminator: member.user.discriminator,
+      inviteCode: usedInvite?.code ?? null,
+      inviter: usedInvite?.inviter?.username ?? null,
+      joinedAt: new Date().toISOString(),
+      guildId: guild.id,
+      guildName: guild.name,
+    };
+
+    console.log("📡 Envoi à n8n :", payload);
+    await axios.post(config.N8N_WEBHOOK_URL, payload, {
+      headers: { "Content-Type": "application/json" },
+    });
+
+    console.log("✅ Données envoyées à n8n");
+
+    await member.roles.add(config.DEFAULT_ROLE_ID);
+    console.log(`✅ Rôle ajouté à ${member.user.tag}`);
+  } catch (err) {
+    console.error("❌ Erreur dans guildMemberAdd:", err);
+  }
 });
 
-bot.start().catch((error) => {
-  console.error("❌ Impossible de démarrer le bot:", error);
+// 🧠 Mise à jour du cache si une invitation est créée ou supprimée
+client.on("inviteCreate", async (invite) => {
+  if (invite.guild instanceof Guild) {
+    await cacheGuildInvites(invite.guild);
+  }
+});
+
+client.on("inviteDelete", async (invite) => {
+  if (invite.guild instanceof Guild) {
+    await cacheGuildInvites(invite.guild);
+  }
+});
+
+// ▶️ Lancement
+client.login(config.DISCORD_TOKEN).catch((err) => {
+  console.error("❌ Erreur lors de la connexion:", err);
   process.exit(1);
 });
